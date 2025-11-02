@@ -1,7 +1,7 @@
 Flask
+Flask-Cors
 Flask-SQLAlchemy
 python-dotenv
 requests
-mux-python==3.17.0
+mux-python>=3.28.0
 gunicorn
-Flask-Cors

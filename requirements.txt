@@ -2,3 +2,5 @@ Flask
 Flask-SQLAlchemy
 python-dotenv
 requests
+mux-python==3.27.0
+gunicorn

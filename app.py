@@ -11,7 +11,7 @@ from functools import wraps
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mux-backend")
 
-# Environment variables (set in Koyeb)
+# Environment variables (set these in Koyeb)
 MUX_TOKEN_ID = os.getenv("MUX_TOKEN_ID")
 MUX_TOKEN_SECRET = os.getenv("MUX_TOKEN_SECRET")
 API_KEY = os.getenv("API_KEY")  # optional shared secret for protected endpoints
@@ -46,7 +46,7 @@ def home():
 def health():
     return jsonify({"status": "ok"}), 200
 
-# Create asset: accepts form-data or JSON 'url' and optional 'title'
+# ----------------- create_asset (creates playback id too) -----------------
 @app.route("/create_asset", methods=["POST", "OPTIONS"])
 @require_api_key
 def create_asset():
@@ -78,14 +78,57 @@ def create_asset():
         logger.exception("Network error when calling Mux Create Asset")
         return jsonify({"error":"network_error","details": str(e)}), 502
 
+    # Parse create response
     try:
         data = resp.json()
     except ValueError:
         data = {"body": resp.text}
 
+    # Normalize asset dict (Mux may return { "data": { ... } })
+    asset = None
+    if isinstance(data, dict):
+        asset = data.get("data") or data
+    if asset and isinstance(asset, dict):
+        asset_id = asset.get("id")
+    else:
+        asset_id = None
+
+    # If asset_id present, create a public playback id (if not existing)
+    if asset_id:
+        try:
+            existing_playback_ids = asset.get("playback_ids") or []
+            has_public = any((p.get("policy") == "public") for p in existing_playback_ids)
+            if not has_public:
+                logger.info("Creating public playback ID for asset %s", asset_id)
+                pb_resp = requests.post(
+                    f"{MUX_API_BASE}/assets/{asset_id}/playback-ids",
+                    json={"policy": "public"},
+                    auth=auth,
+                    timeout=15
+                )
+                try:
+                    pb_data = pb_resp.json()
+                except ValueError:
+                    pb_data = {"body": pb_resp.text}
+                if pb_resp.ok and isinstance(pb_data, dict):
+                    # Determine playback object (wrapped as data or raw)
+                    pb_obj = pb_data.get("data") or pb_data
+                    # merge into asset.playback_ids
+                    if "playback_ids" not in asset:
+                        asset["playback_ids"] = []
+                    asset["playback_ids"].append(pb_obj)
+                    # update the top-level response shape if needed
+                    if isinstance(data, dict) and ("data" in data):
+                        data["data"] = asset
+                    else:
+                        data = asset
+        except requests.RequestException as e:
+            logger.warning("Failed to create playback id for asset %s: %s", asset_id, str(e))
+
+    # Return create response (possibly augmented)
     return jsonify(data), resp.status_code
 
-# Get single asset by id (reliable polling)
+# ----------------- get single asset by id -----------------
 @app.route("/asset/<asset_id>", methods=["GET", "OPTIONS"])
 @require_api_key
 def get_asset(asset_id):
@@ -102,7 +145,7 @@ def get_asset(asset_id):
         data = {"body": resp.text}
     return jsonify(data), resp.status_code
 
-# List assets (unchanged)
+# ----------------- list assets -----------------
 @app.route("/list_assets", methods=["GET", "OPTIONS"])
 @require_api_key
 def list_assets():
@@ -122,7 +165,7 @@ def list_assets():
         data = {"body": resp.text}
     return jsonify(data), resp.status_code
 
-# Delete asset
+# ----------------- delete asset -----------------
 @app.route("/delete_asset", methods=["POST", "DELETE", "OPTIONS"])
 @require_api_key
 def delete_asset():
@@ -153,6 +196,7 @@ def delete_asset():
         data = {"status":"deleted","asset_id": asset_id}
     return jsonify(data), resp.status_code
 
+# Ensure CORS headers (safety/net)
 @app.after_request
 def set_default_headers(response):
     response.headers.setdefault("Access-Control-Allow-Origin", CORS_ORIGINS)

@@ -1,5 +1,5 @@
-Flask
-Flask-Cors
-python-dotenv
-mux-python==3.28.0
-gunicorn
+Flask==2.3.4
+requests==2.31.0
+flask-cors==3.0.10
+gunicorn==21.2.0
+python-dotenv==1.0.0
